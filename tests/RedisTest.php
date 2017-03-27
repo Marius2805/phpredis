@@ -5,7 +5,7 @@ require_once(dirname($_SERVER['PHP_SELF'])."/TestSuite.php");
 class Redis_Test extends TestSuite
 {
     const PORT = 6379;
-    const AUTH = NULL; //replace with a string to use Redis authentication
+    const AUTH = null; //replace with a string to use Redis authentication
 
     /* City lat/long */
     protected $cities = Array(
@@ -4967,15 +4967,73 @@ class Redis_Test extends TestSuite
         $this->assertEquals($this->redis->lrange('mylist', 0, -1), Array('A','B','C','D'));
     }
 
-    public function testSession()
+    public function testSession_savedToRedis()
     {
-        ini_set('session.save_handler', 'redis');
-        ini_set('session.save_path', 'tcp://localhost:6379');
-        if (!@session_start()) {
-            return $this->markTestSkipped();
-        }
+        $this->setSessionHandler();
+
+        $sessionId = session_create_id();
+        $this->startSessionProcess($sessionId, 0, false);
         session_write_close();
-        $this->assertTrue($this->redis->exists('PHPREDIS_SESSION:' . session_id()));
+        $this->assertTrue($this->redis->exists('PHPREDIS_SESSION:' . $sessionId));
+    }
+
+    public function testSession_lockKeyCorrect()
+    {
+        $this->setSessionHandler();
+        $sessionId = session_create_id();
+        $this->startSessionProcess($sessionId, 5, true);
+        usleep(100000);
+
+        $this->assertTrue($this->redis->exists('PHPREDIS_SESSION:' . $sessionId . '_LOCK'));
+    }
+
+    public function testSession_lockReleasedOnClose()
+    {
+        $this->setSessionHandler();
+        $sessionId = session_create_id();
+        $this->startSessionProcess($sessionId, 2, true);
+        usleep(100000);
+
+        $start = microtime(true);
+        $this->startSessionProcess($sessionId, 0, false);
+        $end = microtime(true);
+        $elapsedTime = $end - $start;
+
+        $this->assertTrue($elapsedTime > 1.9);
+    }
+
+    public function testSession_correctLockTTL()
+    {
+        $this->setSessionHandler();
+        $sessionId = session_create_id();
+        $this->startSessionProcess($sessionId, 10, true, 2);
+        usleep(100000);
+
+        $start = microtime(true);
+        $this->startSessionProcess($sessionId, 0, false);
+        $end = microtime(true);
+        $elapsedTime = $end - $start;
+
+        $this->assertTrue($elapsedTime < 3);
+    }
+
+    public function testSession_noUnlockOfOtherProcess()
+    {
+        $this->setSessionHandler();
+        $sessionId = session_create_id();
+        $this->startSessionProcess($sessionId, 3, true, 1); // Process 1
+        usleep(100000);
+        $this->startSessionProcess($sessionId, 5, true);    // Process 2
+
+        $start = microtime(true);
+        // Waiting until TTL of process 1 ended and process 2 locked the session,
+        // because is not guaranteed which waiting process gets the next lock
+        sleep(1);
+        $this->startSessionProcess($sessionId, 0, false);
+        $end = microtime(true);
+        $elapsedTime = $end - $start;
+
+        $this->assertTrue($elapsedTime > 5);
     }
 
     public function testMultipleConnect() {
@@ -4985,6 +5043,28 @@ class Redis_Test extends TestSuite
         for($i = 0; $i < 5; $i++) {
             $this->redis->connect($host, $port);
             $this->assertEquals($this->redis->ping(), "+PONG");
+        }
+    }
+
+    private function setSessionHandler()
+    {
+        ini_set('session.save_handler', 'redis');
+        ini_set('session.save_path', 'tcp://' . $this->getHost() . ':6379');
+    }
+
+    /**
+     * @param string $sessionId
+     * @param int    $sleepTime
+     * @param bool   $background
+     * @param int    $maxExecutionTime
+     */
+    private function startSessionProcess($sessionId, $sleepTime, $background, $maxExecutionTime = 300)
+    {
+        if (substr(php_uname(), 0, 7) == "Windows"){
+            $this->markTestSkipped();
+        } else {
+            $command = 'php ' . __DIR__ . '/startSession.php ' . $sessionId . ' ' . $sleepTime . ' ' . $maxExecutionTime . ($background ? ' > /dev/null &' : '');
+            exec($command);
         }
     }
 }
