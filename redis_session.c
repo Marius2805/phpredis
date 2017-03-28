@@ -189,12 +189,21 @@ redis_pool_get_sock(redis_pool *pool, const char *key TSRMLS_DC) {
 
 void lock_acquire(RedisSock *redis_sock, redis_session_lock_status *lock_status)
 {
-    if (!lock_status->is_locked) {
+    int locking_enabled = INI_INT("redis.session.locking_enabled");
+
+    if (!lock_status->is_locked && locking_enabled > 0) {
         char *cmd, *response, hostname[64] = {0}, lock_secret_hash[41] = {0}, sha_digest[20];
-        int response_len, cmd_len, random_number, pid;
+        int response_len, cmd_len, random_number, pid, lock_wait_time;
         PHP_SHA1_CTX sha_context;
         smart_string lock_secret = {0};
         smart_string lock_key = {0};
+
+        lock_wait_time = INI_INT("redis.session.lock_wait_time");
+        if (lock_wait_time == 0) {
+          lock_wait_time = 2000;
+        }
+
+        printf("%i\n", lock_wait_time);
 
         gethostname(hostname, 64);
 
@@ -232,7 +241,7 @@ void lock_acquire(RedisSock *redis_sock, redis_session_lock_status *lock_status)
               && strncmp(response, "+OK", 3) == 0) {
                 lock_status->is_locked = 1;
           } else {
-            usleep(5000);
+            usleep(lock_wait_time);
           }
         }
 

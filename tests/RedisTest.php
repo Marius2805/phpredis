@@ -4987,6 +4987,22 @@ class Redis_Test extends TestSuite
         $this->assertTrue($this->redis->exists('PHPREDIS_SESSION:' . $sessionId . '_LOCK'));
     }
 
+    public function testSession_lockingDisabledByDefault()
+    {
+        $this->setSessionHandler();
+        $sessionId = session_create_id();
+        $this->startSessionProcess($sessionId, 5, true, 300, false);
+        usleep(100000);
+
+        $start = microtime(true);
+        $this->startSessionProcess($sessionId, 0, false, 300, false);
+        $end = microtime(true);
+        $elapsedTime = $end - $start;
+
+        $this->assertFalse($this->redis->exists('PHPREDIS_SESSION:' . $sessionId . '_LOCK'));
+        $this->assertTrue($elapsedTime < 1);
+    }
+
     public function testSession_lockReleasedOnClose()
     {
         $this->setSessionHandler();
@@ -5036,6 +5052,21 @@ class Redis_Test extends TestSuite
         $this->assertTrue($elapsedTime > 5);
     }
 
+    public function testSession_lockWaitTime()
+    {
+        $this->setSessionHandler();
+        $sessionId = session_create_id();
+        $this->startSessionProcess($sessionId, 1, true, 300);
+        usleep(100000);
+
+        $start = microtime(true);
+        $this->startSessionProcess($sessionId, 0, false, 300, true, 3000000);
+        $end = microtime(true);
+        $elapsedTime = $end - $start;
+
+        $this->assertTrue($elapsedTime > 2.5 && $elapsedTime < 3.5);
+    }
+
     public function testMultipleConnect() {
         $host = $this->redis->GetHost();
         $port = $this->redis->GetPort();
@@ -5057,13 +5088,28 @@ class Redis_Test extends TestSuite
      * @param int    $sleepTime
      * @param bool   $background
      * @param int    $maxExecutionTime
+     * @param bool   $locking_enabled
+     * @param int    $lock_wait_time
      */
-    private function startSessionProcess($sessionId, $sleepTime, $background, $maxExecutionTime = 300)
+    private function startSessionProcess($sessionId, $sleepTime, $background, $maxExecutionTime = 300, $locking_enabled = true, $lock_wait_time = null)
     {
         if (substr(php_uname(), 0, 7) == "Windows"){
             $this->markTestSkipped();
         } else {
-            $command = 'php ' . __DIR__ . '/startSession.php ' . $sessionId . ' ' . $sleepTime . ' ' . $maxExecutionTime . ($background ? ' > /dev/null &' : '');
+            $commandParameters = [$sessionId, $sleepTime, $maxExecutionTime];
+            if ($locking_enabled) {
+                $commandParameters[] = '1';
+
+                if ($lock_wait_time != null) {
+                    $commandParameters[] = $lock_wait_time;
+                }
+            }
+
+            $command = $command = 'php ' . __DIR__ . '/startSession.php ' . implode(' ', $commandParameters);
+            if ($background) {
+                $command .= ' > /dev/null &';
+            }
+
             exec($command);
         }
     }

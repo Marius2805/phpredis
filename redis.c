@@ -73,6 +73,10 @@ PHP_INI_BEGIN()
     PHP_INI_ENTRY("redis.clusters.seeds", "", PHP_INI_ALL, NULL)
     PHP_INI_ENTRY("redis.clusters.timeout", "", PHP_INI_ALL, NULL)
     PHP_INI_ENTRY("redis.clusters.read_timeout", "", PHP_INI_ALL, NULL)
+
+     /* redis session */
+     PHP_INI_ENTRY("redis.session.locking_enabled", "", PHP_INI_ALL, NULL)
+     PHP_INI_ENTRY("redis.session.lock_wait_time", "", PHP_INI_ALL, NULL)
 PHP_INI_END()
 
 /**
