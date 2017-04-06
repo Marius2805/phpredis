@@ -5033,6 +5033,36 @@ class Redis_Test extends TestSuite
         $this->assertTrue($elapsedTime < 3);
     }
 
+    public function testSession_correctLockRetryCount()
+    {
+        $this->setSessionHandler();
+        $sessionId = session_create_id();
+        $this->startSessionProcess($sessionId, 10, true);
+        usleep(100000);
+
+        $start = microtime(true);
+        $this->startSessionProcess($sessionId, 0, false, 10, true, 1000000, 3);
+        $end = microtime(true);
+        $elapsedTime = $end - $start;
+
+        $this->assertTrue($elapsedTime > 3 && $elapsedTime < 4);
+    }
+
+    public function testSession_defaultLockRetryCount()
+    {
+        $this->setSessionHandler();
+        $sessionId = session_create_id();
+        $this->startSessionProcess($sessionId, 10, true);
+        usleep(100000);
+
+        $start = microtime(true);
+        $this->startSessionProcess($sessionId, 0, false, 10, true, 200000, 0);
+        $end = microtime(true);
+        $elapsedTime = $end - $start;
+
+        $this->assertTrue($elapsedTime > 2 && $elapsedTime < 3);
+    }
+
     public function testSession_noUnlockOfOtherProcess()
     {
         $this->setSessionHandler();
@@ -5085,18 +5115,19 @@ class Redis_Test extends TestSuite
 
     /**
      * @param string $sessionId
-     * @param int    $sleepTime
-     * @param bool   $background
-     * @param int    $maxExecutionTime
-     * @param bool   $locking_enabled
-     * @param int    $lock_wait_time
+     * @param int $sleepTime
+     * @param bool $background
+     * @param int $maxExecutionTime
+     * @param bool $locking_enabled
+     * @param int $lock_wait_time
+     * @param int $lock_retries
      */
-    private function startSessionProcess($sessionId, $sleepTime, $background, $maxExecutionTime = 300, $locking_enabled = true, $lock_wait_time = null)
+    private function startSessionProcess($sessionId, $sleepTime, $background, $maxExecutionTime = 300, $locking_enabled = true, $lock_wait_time = null, $lock_retries = -1)
     {
         if (substr(php_uname(), 0, 7) == "Windows"){
             $this->markTestSkipped();
         } else {
-            $commandParameters = [$sessionId, $sleepTime, $maxExecutionTime];
+            $commandParameters = [$sessionId, $sleepTime, $maxExecutionTime, $lock_retries];
             if ($locking_enabled) {
                 $commandParameters[] = '1';
 
