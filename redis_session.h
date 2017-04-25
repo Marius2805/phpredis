@@ -12,6 +12,7 @@ typedef struct {
 
 void lock_acquire(RedisSock *redis_sock, redis_session_lock_status *lock_status);
 void lock_release(RedisSock *redis_sock, redis_session_lock_status *lock_status);
+void calculate_secreet_hash(redis_session_lock_status *lock_status);
 
 PS_OPEN_FUNC(redis);
 PS_CLOSE_FUNC(redis);

@@ -192,11 +192,11 @@ void lock_acquire(RedisSock *redis_sock, redis_session_lock_status *lock_status)
     int locking_enabled = INI_INT("redis.session.locking_enabled");
 
     if (!lock_status->is_locked && locking_enabled > 0) {
-        char *cmd, *response, hostname[64] = {0}, lock_secret_hash[41] = {0}, sha_digest[20];
-        int response_len, cmd_len, random_number, pid, lock_wait_time, max_lock_retries, i_lock_retry, lock_expire;
-        PHP_SHA1_CTX sha_context;
-        smart_string lock_secret = {0};
+        char *cmd, *response;
+        int response_len, cmd_len, lock_wait_time, max_lock_retries, i_lock_retry, lock_expire;
         smart_string lock_key = {0};
+
+        calculate_secreet_hash(lock_status);
 
         lock_wait_time = INI_INT("redis.session.lock_wait_time");
         if (lock_wait_time == 0) {
@@ -212,23 +212,6 @@ void lock_acquire(RedisSock *redis_sock, redis_session_lock_status *lock_status)
         if (lock_expire == 0) {
           lock_expire = INI_INT("max_execution_time");
         }
-
-        gethostname(hostname, 64);
-
-        // Concatenating the redis lock secret
-        smart_string_append_long(&lock_secret, rand());
-        smart_string_appendc(&lock_secret, '|');
-        smart_string_appendl(&lock_secret, hostname, strlen(hostname));
-        smart_string_appendc(&lock_secret, '|');
-        smart_string_append_long(&lock_secret, getppid());
-
-        // Hashing the redis lock secret (value)
-        PHP_SHA1Init(&sha_context);
-        PHP_SHA1Update(&sha_context, lock_secret.c, lock_secret.len);
-        PHP_SHA1Final(sha_digest, &sha_context);
-        make_sha1_digest(lock_secret_hash, sha_digest);
-
-        strncpy(lock_status->lock_secret_hash, lock_secret_hash, 41);
 
         // Building the redis lock key
         smart_string_appendl(&lock_key, lock_status->session_key, strlen(lock_status->session_key));
@@ -274,6 +257,31 @@ void lock_release(RedisSock *redis_sock, redis_session_lock_status *lock_status)
       efree(cmd);
       efree(response);
     }
+}
+
+void calculate_secreet_hash(redis_session_lock_status *lock_status)
+{
+    int random_number, pid;
+    char hostname[64] = {0}, lock_secret_hash[41] = {0}, sha_digest[20];
+    PHP_SHA1_CTX sha_context;
+    smart_string lock_secret = {0};
+
+    gethostname(hostname, 64);
+
+    // Concatenating the redis lock secret
+    smart_string_append_long(&lock_secret, rand());
+    smart_string_appendc(&lock_secret, '|');
+    smart_string_appendl(&lock_secret, hostname, strlen(hostname));
+    smart_string_appendc(&lock_secret, '|');
+    smart_string_append_long(&lock_secret, getppid());
+
+    // Hashing the redis lock secret (value)
+    PHP_SHA1Init(&sha_context);
+    PHP_SHA1Update(&sha_context, lock_secret.c, lock_secret.len);
+    PHP_SHA1Final(sha_digest, &sha_context);
+    make_sha1_digest(lock_secret_hash, sha_digest);
+
+    strncpy(lock_status->lock_secret_hash, lock_secret_hash, 41);
 }
 
 /* {{{ PS_OPEN_FUNC
