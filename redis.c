@@ -78,6 +78,7 @@ PHP_INI_BEGIN()
      PHP_INI_ENTRY("redis.session.locking_enabled", "", PHP_INI_ALL, NULL)
      PHP_INI_ENTRY("redis.session.lock_wait_time", "", PHP_INI_ALL, NULL)
      PHP_INI_ENTRY("redis.session.lock_retries", "", PHP_INI_ALL, NULL)
+     PHP_INI_ENTRY("redis.session.lock_expire", "", PHP_INI_ALL, NULL)
 PHP_INI_END()
 
 /**

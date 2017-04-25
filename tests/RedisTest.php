@@ -5018,11 +5018,26 @@ class Redis_Test extends TestSuite
         $this->assertTrue($elapsedTime > 1.9);
     }
 
-    public function testSession_correctLockTTL()
+    public function testSession_ttlMaxExecutionTime()
     {
         $this->setSessionHandler();
         $sessionId = session_create_id();
         $this->startSessionProcess($sessionId, 10, true, 2);
+        usleep(100000);
+
+        $start = microtime(true);
+        $this->startSessionProcess($sessionId, 0, false);
+        $end = microtime(true);
+        $elapsedTime = $end - $start;
+
+        $this->assertTrue($elapsedTime < 3);
+    }
+
+    public function testSession_ttlLockExpire()
+    {
+        $this->setSessionHandler();
+        $sessionId = session_create_id();
+        $this->startSessionProcess($sessionId, 10, true, 300, true, null, -1, 2);
         usleep(100000);
 
         $start = microtime(true);
@@ -5115,19 +5130,20 @@ class Redis_Test extends TestSuite
 
     /**
      * @param string $sessionId
-     * @param int $sleepTime
-     * @param bool $background
-     * @param int $maxExecutionTime
-     * @param bool $locking_enabled
-     * @param int $lock_wait_time
-     * @param int $lock_retries
+     * @param int    $sleepTime
+     * @param bool   $background
+     * @param int    $maxExecutionTime
+     * @param bool   $locking_enabled
+     * @param int    $lock_wait_time
+     * @param int    $lock_retries
+     * @param int    $lock_expires
      */
-    private function startSessionProcess($sessionId, $sleepTime, $background, $maxExecutionTime = 300, $locking_enabled = true, $lock_wait_time = null, $lock_retries = -1)
+    private function startSessionProcess($sessionId, $sleepTime, $background, $maxExecutionTime = 300, $locking_enabled = true, $lock_wait_time = null, $lock_retries = -1, $lock_expires = 0)
     {
         if (substr(php_uname(), 0, 7) == "Windows"){
             $this->markTestSkipped();
         } else {
-            $commandParameters = [$sessionId, $sleepTime, $maxExecutionTime, $lock_retries];
+            $commandParameters = [$sessionId, $sleepTime, $maxExecutionTime, $lock_retries, $lock_expires];
             if ($locking_enabled) {
                 $commandParameters[] = '1';
 

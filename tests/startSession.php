@@ -2,20 +2,19 @@
 $sessionId = $argv[1];
 $sleepTime = $argv[2];
 $maxExecutionTime = $argv[3];
+$lock_retries = $argv[4];
+$lock_expire = $argv[5];
 
 ini_set('max_execution_time', $maxExecutionTime);
-
-
-if (isset($argv[4])) {
-    ini_set('redis.session.lock_retries', $argv[4]);
-}
-
-if (isset($argv[5])) {
-    ini_set('redis.session.locking_enabled', $argv[5]);
-}
+ini_set('redis.session.lock_retries', $lock_retries);
+ini_set('redis.session.lock_expire', $lock_expire);
 
 if (isset($argv[6])) {
-    ini_set('redis.session.lock_wait_time', $argv[6]);
+    ini_set('redis.session.locking_enabled', $argv[6]);
+}
+
+if (isset($argv[7])) {
+    ini_set('redis.session.lock_wait_time', $argv[7]);
 }
 
 session_id($sessionId);

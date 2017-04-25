@@ -193,7 +193,7 @@ void lock_acquire(RedisSock *redis_sock, redis_session_lock_status *lock_status)
 
     if (!lock_status->is_locked && locking_enabled > 0) {
         char *cmd, *response, hostname[64] = {0}, lock_secret_hash[41] = {0}, sha_digest[20];
-        int response_len, cmd_len, random_number, pid, lock_wait_time, max_lock_retries, i_lock_retry;
+        int response_len, cmd_len, random_number, pid, lock_wait_time, max_lock_retries, i_lock_retry, lock_expire;
         PHP_SHA1_CTX sha_context;
         smart_string lock_secret = {0};
         smart_string lock_key = {0};
@@ -206,6 +206,11 @@ void lock_acquire(RedisSock *redis_sock, redis_session_lock_status *lock_status)
         max_lock_retries = INI_INT("redis.session.lock_retries");
         if (max_lock_retries == 0) {
           max_lock_retries = 10;
+        }
+
+        lock_expire = INI_INT("redis.session.lock_expire");
+        if (lock_expire == 0) {
+          lock_expire = INI_INT("max_execution_time");
         }
 
         gethostname(hostname, 64);
@@ -231,15 +236,13 @@ void lock_acquire(RedisSock *redis_sock, redis_session_lock_status *lock_status)
         smart_string_0(&lock_key);
         strncpy(lock_status->lock_key, lock_key.c, 256);
 
-        if (INI_INT("max_execution_time") > 0) {
-            cmd_len = redis_cmd_format_static(&cmd, "SET", "ssssd", lock_status->lock_key, strlen(lock_status->lock_key), lock_status->lock_secret_hash, strlen(lock_status->lock_secret_hash), "NX", 2, "PX", 2, INI_INT("max_execution_time") * 1000);
+        if (lock_expire > 0) {
+            cmd_len = redis_cmd_format_static(&cmd, "SET", "ssssd", lock_status->lock_key, strlen(lock_status->lock_key), lock_status->lock_secret_hash, strlen(lock_status->lock_secret_hash), "NX", 2, "PX", 2, lock_expire * 1000);
         } else {
             cmd_len = redis_cmd_format_static(&cmd, "SET", "sss", lock_status->lock_key, strlen(lock_status->lock_key), lock_status->lock_secret_hash, strlen(lock_status->lock_secret_hash), "NX", 2);
         }
 
         for (i_lock_retry = 0; !lock_status->is_locked && (max_lock_retries == -1 || i_lock_retry <= max_lock_retries); i_lock_retry++) {
-          printf("%i\n", i_lock_retry);
-          printf("%i\n", lock_status->is_locked);
           if(!(redis_sock_write(redis_sock, cmd, cmd_len TSRMLS_CC) < 0)
               && ((response = redis_sock_read(redis_sock, &response_len TSRMLS_CC)) != NULL)
               && response_len == 3
@@ -460,9 +463,9 @@ PS_READ_FUNC(redis)
 #else
     resp = redis_session_key(rpm, key->val, key->len, &resp_len);
 #endif
-    pool->lock_status->session_key = (char *) malloc(strlen(resp));
-    memset(pool->lock_status->session_key, 0, strlen(resp));
-    strncpy(pool->lock_status->session_key, resp, strlen(resp));
+    pool->lock_status->session_key = (char *) malloc(resp_len);
+    memset(pool->lock_status->session_key, 0, resp_len);
+    strncpy(pool->lock_status->session_key, resp, resp_len);
 
     cmd_len = redis_cmd_format_static(&cmd, "GET", "s", resp, resp_len);
     efree(resp);
