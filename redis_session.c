@@ -196,7 +196,7 @@ void lock_acquire(RedisSock *redis_sock, redis_session_lock_status *lock_status)
         int response_len, cmd_len, lock_wait_time, max_lock_retries, i_lock_retry, lock_expire;
         smart_string lock_key = {0};
 
-        calculate_secreet_hash(lock_status);
+        calculate_secret_hash(lock_status);
 
         lock_wait_time = INI_INT("redis.session.lock_wait_time");
         if (lock_wait_time == 0) {
@@ -259,7 +259,7 @@ void lock_release(RedisSock *redis_sock, redis_session_lock_status *lock_status)
     }
 }
 
-void calculate_secreet_hash(redis_session_lock_status *lock_status)
+void calculate_secret_hash(redis_session_lock_status *lock_status)
 {
     int random_number, pid;
     char hostname[64] = {0}, lock_secret_hash[41] = {0}, sha_digest[20];
