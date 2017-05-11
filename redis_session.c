@@ -245,7 +245,7 @@ void lock_acquire(RedisSock *redis_sock, redis_session_lock_status *lock_status)
 void lock_release(RedisSock *redis_sock, redis_session_lock_status *lock_status)
 {
     if (lock_status->is_locked) {
-      char  *cmd, *response, *release_script;
+      char *cmd, *response, *release_script;
       int response_len, cmd_len;
 
       release_script = "if redis.call(\"get\",KEYS[1]) == ARGV[1] then return redis.call(\"del\",KEYS[1]) else return 0 end";
