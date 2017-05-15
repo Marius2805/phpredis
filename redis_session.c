@@ -434,7 +434,6 @@ PS_OPEN_FUNC(redis)
  */
 PS_CLOSE_FUNC(redis)
 {
-    char *session;
     redis_pool *pool = PS_GET_MOD_DATA();
     redis_pool_member *rpm = redis_pool_get_sock(pool, pool->lock_status->session_key TSRMLS_CC);
 
