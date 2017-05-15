@@ -298,11 +298,9 @@ void calculate_secret_hash(redis_session_lock_status *lock_status)
     gethostname(hostname, 64);
 
     // Concatenating the redis lock secret
-    smart_string_append_long(&lock_secret, rand());
-    smart_string_appendc(&lock_secret, '|');
     smart_string_appendl(&lock_secret, hostname, strlen(hostname));
     smart_string_appendc(&lock_secret, '|');
-    smart_string_append_long(&lock_secret, getppid());
+    smart_string_append_long(&lock_secret, getpid());
 
     // Hashing the redis lock secret (value)
     PHP_SHA1Init(&sha_context);
