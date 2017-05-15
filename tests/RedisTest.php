@@ -5147,6 +5147,10 @@ class Redis_Test extends TestSuite
                 }
             }
 
+            foreach ($commandParameters as &$parameter) {
+                $parameter = "'$parameter'";
+            }
+
             $command = $command = 'php ' . __DIR__ . '/startSession.php ' . implode(' ', $commandParameters);
             if ($background) {
                 $command .= ' > /dev/null &';
