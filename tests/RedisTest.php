@@ -5,7 +5,7 @@ require_once(dirname($_SERVER['PHP_SELF'])."/TestSuite.php");
 class Redis_Test extends TestSuite
 {
     const PORT = 6379;
-    const AUTH = null; //replace with a string to use Redis authentication
+    const AUTH = NULL; //replace with a string to use Redis authentication
 
     /* City lat/long */
     protected $cities = Array(
@@ -5007,15 +5007,10 @@ class Redis_Test extends TestSuite
     {
         $this->setSessionHandler();
         $sessionId = session_create_id();
-        $this->startSessionProcess($sessionId, 2, true);
-        usleep(100000);
+        $this->startSessionProcess($sessionId, 1, true);
+        usleep(1100000);
 
-        $start = microtime(true);
-        $this->startSessionProcess($sessionId, 0, false);
-        $end = microtime(true);
-        $elapsedTime = $end - $start;
-
-        $this->assertTrue($elapsedTime > 1.9);
+        $this->assertFalse($this->redis->exists('PHPREDIS_SESSION:' . $sessionId . '_LOCK'));
     }
 
     public function testSession_ttlMaxExecutionTime()
