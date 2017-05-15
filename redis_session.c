@@ -245,17 +245,46 @@ void lock_acquire(RedisSock *redis_sock, redis_session_lock_status *lock_status)
 void lock_release(RedisSock *redis_sock, redis_session_lock_status *lock_status)
 {
     if (lock_status->is_locked) {
-      char *cmd, *response, *release_script;
-      int response_len, cmd_len;
+        char *cmd, *response;
+        int response_len, cmd_len;
 
-      release_script = "if redis.call(\"get\",KEYS[1]) == ARGV[1] then return redis.call(\"del\",KEYS[1]) else return 0 end";
-      cmd_len = redis_cmd_format_static(&cmd, "EVAL", "sdss", release_script, strlen(release_script), 1, lock_status->lock_key, strlen(lock_status->lock_key), lock_status->lock_secret_hash, strlen(lock_status->lock_secret_hash));
+        upload_lock_release_script(redis_sock);
+        cmd_len = redis_cmd_format_static(&cmd, "EVALSHA", "sdss", REDIS_G(lock_release_lua_script_hash), strlen(REDIS_G(lock_release_lua_script_hash)), 1, lock_status->lock_key, strlen(lock_status->lock_key), lock_status->lock_secret_hash, strlen(lock_status->lock_secret_hash));
 
-      redis_sock_write(redis_sock, cmd, cmd_len TSRMLS_CC);
-      response = redis_sock_read(redis_sock, &response_len TSRMLS_CC);
+        redis_sock_write(redis_sock, cmd, cmd_len TSRMLS_CC);
+        response = redis_sock_read(redis_sock, &response_len TSRMLS_CC);
 
-      efree(cmd);
-      efree(response);
+        // in case of redis script cache has been flushed
+        if (response == NULL) {
+            REDIS_G(lock_release_lua_script_uploaded) = 0;
+            upload_lock_release_script(redis_sock);
+            redis_sock_write(redis_sock, cmd, cmd_len TSRMLS_CC);
+            response = redis_sock_read(redis_sock, &response_len TSRMLS_CC);
+        }
+
+        efree(cmd);
+        efree(response);
+    }
+}
+
+void upload_lock_release_script(RedisSock *redis_sock)
+{
+    if (!REDIS_G(lock_release_lua_script_uploaded)) {
+        char *cmd, *response, *release_script;
+        int response_len, cmd_len;
+        release_script = "if redis.call(\"get\",KEYS[1]) == ARGV[1] then return redis.call(\"del\",KEYS[1]) else return 0 end";
+
+        cmd_len = redis_cmd_format_static(&cmd, "SCRIPT", "ss", "LOAD", strlen("LOAD"), release_script, strlen(release_script));
+
+        redis_sock_write(redis_sock, cmd, cmd_len TSRMLS_CC);
+        response = redis_sock_read(redis_sock, &response_len TSRMLS_CC);
+        memset(REDIS_G(lock_release_lua_script_hash), 0, 41);
+        strncpy(REDIS_G(lock_release_lua_script_hash), response, strlen(response));
+
+        REDIS_G(lock_release_lua_script_uploaded) = 1;
+
+        efree(cmd);
+        efree(response);
     }
 }
 

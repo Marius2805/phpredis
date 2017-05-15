@@ -247,7 +247,7 @@ typedef void (*ResultCallback)(INTERNAL_FUNCTION_PARAMETERS,
 
 PHP_REDIS_API int redis_connect(INTERNAL_FUNCTION_PARAMETERS, int persistent);
 
-PHP_REDIS_API void generic_sort_cmd(INTERNAL_FUNCTION_PARAMETERS, char *sort, 
+PHP_REDIS_API void generic_sort_cmd(INTERNAL_FUNCTION_PARAMETERS, char *sort,
     int use_alpha);
 
 PHP_REDIS_API void generic_subscribe_cmd(INTERNAL_FUNCTION_PARAMETERS, char *sub_cmd);
@@ -273,14 +273,23 @@ PHP_REDIS_API void set_pipeline_current(zval *object, request_item *current);
 
 #ifndef _MSC_VER
 ZEND_BEGIN_MODULE_GLOBALS(redis)
+    int lock_release_lua_script_uploaded;
+    char lock_release_lua_script_hash[41];
 ZEND_END_MODULE_GLOBALS(redis)
+
+ZEND_EXTERN_MODULE_GLOBALS(redis);
+
+#ifdef ZTS
+#define REDIS_G(v) TSRMG(redis_globals_id, redis_counter_globals *, v)
+#else
+#define REDIS_G(v) (redis_globals.v)
 #endif
 
 struct redis_queued_item {
     /* reading function */
     zval * (*fun)(INTERNAL_FUNCTION_PARAMETERS, RedisSock *redis_sock, ...);
 
-    char *cmd; 
+    char *cmd;
     int cmd_len;
 
     struct redis_queued_item *next;
