@@ -5146,10 +5146,7 @@ class Redis_Test extends TestSuite
                     $commandParameters[] = $lock_wait_time;
                 }
             }
-
-            foreach ($commandParameters as &$parameter) {
-                $parameter = "'$parameter'";
-            }
+            $commandParameters = array_map('escapeshellarg', $commandParameters);
 
             $command = $command = 'php ' . __DIR__ . '/startSession.php ' . implode(' ', $commandParameters);
             if ($background) {
