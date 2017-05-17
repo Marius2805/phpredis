@@ -237,6 +237,7 @@ void lock_acquire(RedisSock *redis_sock, redis_session_lock_status *lock_status)
         }
         lock_status->is_locked = 1;
 
+        smart_string_free(&lock_key);
         efree(cmd);
         efree(response);
     }
@@ -309,6 +310,7 @@ void calculate_secret_hash(redis_session_lock_status *lock_status)
     make_sha1_digest(lock_secret_hash, sha_digest);
 
     strncpy(lock_status->lock_secret_hash, lock_secret_hash, sizeof(lock_status->lock_secret_hash));
+    smart_string_free(&lock_secret);
 }
 
 /* {{{ PS_OPEN_FUNC
