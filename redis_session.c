@@ -40,7 +40,6 @@
 #include "php_variables.h"
 #include "SAPI.h"
 #include "ext/standard/url.h"
-#include "ext/standard/sha1.h"
 
 ps_module ps_mod_redis = {
     PS_MOD(redis)
@@ -196,7 +195,7 @@ void lock_acquire(RedisSock *redis_sock, redis_session_lock_status *lock_status)
         int response_len, cmd_len, lock_wait_time, max_lock_retries, i_lock_retry, lock_expire;
         smart_string lock_key = {0};
 
-        calculate_secret_hash(lock_status);
+        calculate_lock_secret(lock_status);
 
         lock_wait_time = INI_INT("redis.session.lock_wait_time");
         if (lock_wait_time == 0) {
@@ -220,9 +219,9 @@ void lock_acquire(RedisSock *redis_sock, redis_session_lock_status *lock_status)
         strncpy(lock_status->lock_key, lock_key.c, 256);
 
         if (lock_expire > 0) {
-            cmd_len = REDIS_SPPRINTF(&cmd, "SET", "ssssd", lock_status->lock_key, strlen(lock_status->lock_key), lock_status->lock_secret_hash, strlen(lock_status->lock_secret_hash), "NX", 2, "PX", 2, lock_expire * 1000);
+            cmd_len = REDIS_SPPRINTF(&cmd, "SET", "ssssd", lock_status->lock_key, strlen(lock_status->lock_key), lock_status->lock_secret.c, strlen(lock_status->lock_secret.c), "NX", 2, "PX", 2, lock_expire * 1000);
         } else {
-            cmd_len = REDIS_SPPRINTF(&cmd, "SET", "sss", lock_status->lock_key, strlen(lock_status->lock_key), lock_status->lock_secret_hash, strlen(lock_status->lock_secret_hash), "NX", 2);
+            cmd_len = REDIS_SPPRINTF(&cmd, "SET", "sss", lock_status->lock_key, strlen(lock_status->lock_key), lock_status->lock_secret.c, strlen(lock_status->lock_secret.c), "NX", 2);
         }
 
         for (i_lock_retry = 0; !lock_status->is_locked && (max_lock_retries == -1 || i_lock_retry <= max_lock_retries); i_lock_retry++) {
@@ -250,7 +249,7 @@ void lock_release(RedisSock *redis_sock, redis_session_lock_status *lock_status)
         int response_len, cmd_len;
 
         upload_lock_release_script(redis_sock);
-        cmd_len = REDIS_SPPRINTF(&cmd, "EVALSHA", "sdss", REDIS_G(lock_release_lua_script_hash), strlen(REDIS_G(lock_release_lua_script_hash)), 1, lock_status->lock_key, strlen(lock_status->lock_key), lock_status->lock_secret_hash, strlen(lock_status->lock_secret_hash));
+        cmd_len = REDIS_SPPRINTF(&cmd, "EVALSHA", "sdss", REDIS_G(lock_release_lua_script_hash), strlen(REDIS_G(lock_release_lua_script_hash)), 1, lock_status->lock_key, strlen(lock_status->lock_key), lock_status->lock_secret.c, strlen(lock_status->lock_secret.c));
 
         redis_sock_write(redis_sock, cmd, cmd_len TSRMLS_CC);
         response = redis_sock_read(redis_sock, &response_len TSRMLS_CC);
@@ -289,28 +288,16 @@ void upload_lock_release_script(RedisSock *redis_sock)
     }
 }
 
-void calculate_secret_hash(redis_session_lock_status *lock_status)
+void calculate_lock_secret(redis_session_lock_status *lock_status)
 {
-    int random_number, pid;
-    char hostname[64] = {0}, lock_secret_hash[41] = {0}, sha_digest[20];
-    PHP_SHA1_CTX sha_context;
-    smart_string lock_secret = {0};
-
+    char hostname[64] = {0};
     gethostname(hostname, 64);
 
     // Concatenating the redis lock secret
-    smart_string_appendl(&lock_secret, hostname, strlen(hostname));
-    smart_string_appendc(&lock_secret, '|');
-    smart_string_append_long(&lock_secret, getpid());
-
-    // Hashing the redis lock secret (value)
-    PHP_SHA1Init(&sha_context);
-    PHP_SHA1Update(&sha_context, lock_secret.c, lock_secret.len);
-    PHP_SHA1Final(sha_digest, &sha_context);
-    make_sha1_digest(lock_secret_hash, sha_digest);
-
-    strncpy(lock_status->lock_secret_hash, lock_secret_hash, sizeof(lock_status->lock_secret_hash));
-    smart_string_free(&lock_secret);
+    smart_string_appendl(&lock_status->lock_secret, hostname, strlen(hostname));
+    smart_string_appendc(&lock_status->lock_secret, '|');
+    smart_string_append_long(&lock_status->lock_secret, getpid());
+    smart_string_0(&lock_status->lock_secret);
 }
 
 /* {{{ PS_OPEN_FUNC
@@ -324,7 +311,6 @@ PS_OPEN_FUNC(redis)
     redis_pool *pool = redis_pool_new(TSRMLS_C);
     redis_session_lock_status *lock_status = ecalloc(1, sizeof(redis_session_lock_status));
     lock_status->is_locked = 0;
-    memset(lock_status->lock_secret_hash, 0, 41);
     pool->lock_status = lock_status;
 
     for (i=0,j=0,path_len=strlen(save_path); i<path_len; i=j+1) {
