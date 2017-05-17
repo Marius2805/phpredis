@@ -233,8 +233,11 @@ void lock_acquire(RedisSock *redis_sock, redis_session_lock_status *lock_status)
         }
         lock_status->is_locked = 1;
 
+        if (response != NULL) {
+            efree(response);
+        }
+
         efree(cmd);
-        efree(response);
     }
 }
 
@@ -258,8 +261,11 @@ void lock_release(RedisSock *redis_sock, redis_session_lock_status *lock_status)
             response = redis_sock_read(redis_sock, &response_len TSRMLS_CC);
         }
 
+        if (response != NULL) {
+            efree(response);
+        }
+
         efree(cmd);
-        efree(response);
     }
     smart_string_free(&lock_status->lock_key);
     smart_string_free(&lock_status->lock_secret);
@@ -276,13 +282,16 @@ void upload_lock_release_script(RedisSock *redis_sock)
 
         redis_sock_write(redis_sock, cmd, cmd_len TSRMLS_CC);
         response = redis_sock_read(redis_sock, &response_len TSRMLS_CC);
-        memset(REDIS_G(lock_release_lua_script_hash), 0, 41);
-        strncpy(REDIS_G(lock_release_lua_script_hash), response, strlen(response));
 
-        REDIS_G(lock_release_lua_script_uploaded) = 1;
+        if (response != NULL) {
+            memset(REDIS_G(lock_release_lua_script_hash), 0, 41);
+            strncpy(REDIS_G(lock_release_lua_script_hash), response, strlen(response));
+
+            REDIS_G(lock_release_lua_script_uploaded) = 1;
+            efree(response);
+        }
 
         efree(cmd);
-        efree(response);
     }
 }
 
