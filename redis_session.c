@@ -421,14 +421,15 @@ PS_OPEN_FUNC(redis)
 PS_CLOSE_FUNC(redis)
 {
     redis_pool *pool = PS_GET_MOD_DATA();
-    redis_pool_member *rpm = redis_pool_get_sock(pool, pool->lock_status->session_key TSRMLS_CC);
-
-    RedisSock *redis_sock = rpm?rpm->redis_sock:NULL;
-    if (redis_sock) {
-        lock_release(redis_sock, pool->lock_status);
-    }
 
     if(pool){
+        redis_pool_member *rpm = redis_pool_get_sock(pool, pool->lock_status->session_key TSRMLS_CC);
+
+        RedisSock *redis_sock = rpm?rpm->redis_sock:NULL;
+        if (redis_sock) {
+            lock_release(redis_sock, pool->lock_status);
+        }
+
         redis_pool_free(pool TSRMLS_CC);
         PS_SET_MOD_DATA(NULL);
     }
