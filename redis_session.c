@@ -484,7 +484,7 @@ PS_READ_FUNC(redis)
 #else
     resp = redis_session_key(rpm, key->val, key->len, &resp_len);
 #endif
-    pool->lock_status->session_key = (char *) malloc(resp_len);
+    pool->lock_status->session_key = (char *) emalloc(resp_len);
     memset(pool->lock_status->session_key, 0, resp_len);
     strncpy(pool->lock_status->session_key, resp, resp_len);
 
@@ -551,7 +551,7 @@ PS_WRITE_FUNC(redis)
     session = redis_session_key(rpm, key->val, key->len, &session_len);
     cmd_len = redis_cmd_format_static(&cmd, "SETEX", "sds", session, session_len, INI_INT("session.gc_maxlifetime"), val->val, val->len);
 #endif
-    pool->lock_status->session_key = (char *) malloc(strlen(session));
+    pool->lock_status->session_key = (char *) emalloc(strlen(session));
     memset(pool->lock_status->session_key, 0, strlen(session));
     strncpy(pool->lock_status->session_key, session, strlen(session));
     efree(session);
