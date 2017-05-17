@@ -6,7 +6,7 @@
 typedef struct {
     zend_bool is_locked;
     char *session_key;
-	char lock_key[256];
+	smart_string lock_key;
     smart_string lock_secret;
 } redis_session_lock_status;
 
