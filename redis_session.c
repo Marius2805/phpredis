@@ -188,57 +188,55 @@ redis_pool_get_sock(redis_pool *pool, const char *key TSRMLS_DC) {
 
 void lock_acquire(RedisSock *redis_sock, redis_session_lock_status *lock_status)
 {
-    int locking_enabled = INI_INT("redis.session.locking_enabled");
+    if (lock_status->is_locked || !INI_INT("redis.session.locking_enabled")) return;
 
-    if (!lock_status->is_locked && locking_enabled > 0) {
-        char *cmd, *response;
-        int response_len, cmd_len, lock_wait_time, max_lock_retries, i_lock_retry, lock_expire;
-        calculate_lock_secret(lock_status);
+    char *cmd, *response;
+    int response_len, cmd_len, lock_wait_time, max_lock_retries, i_lock_retry, lock_expire;
+    calculate_lock_secret(lock_status);
 
-        lock_wait_time = INI_INT("redis.session.lock_wait_time");
-        if (lock_wait_time == 0) {
-          lock_wait_time = 2000;
-        }
-
-        max_lock_retries = INI_INT("redis.session.lock_retries");
-        if (max_lock_retries == 0) {
-          max_lock_retries = 10;
-        }
-
-        lock_expire = INI_INT("redis.session.lock_expire");
-        if (lock_expire == 0) {
-          lock_expire = INI_INT("max_execution_time");
-        }
-
-        // Building the redis lock key
-        smart_string_appendl(&lock_status->lock_key, lock_status->session_key, strlen(lock_status->session_key));
-        smart_string_appendl(&lock_status->lock_key, "_LOCK", strlen("_LOCK"));
-        smart_string_0(&lock_status->lock_key);
-
-        if (lock_expire > 0) {
-            cmd_len = REDIS_SPPRINTF(&cmd, "SET", "ssssd", lock_status->lock_key.c, lock_status->lock_key.len, lock_status->lock_secret.c, lock_status->lock_secret.len, "NX", 2, "PX", 2, lock_expire * 1000);
-        } else {
-            cmd_len = REDIS_SPPRINTF(&cmd, "SET", "sss", lock_status->lock_key.c, lock_status->lock_key.len, lock_status->lock_secret.c, lock_status->lock_secret.len, "NX", 2);
-        }
-
-        for (i_lock_retry = 0; !lock_status->is_locked && (max_lock_retries == -1 || i_lock_retry <= max_lock_retries); i_lock_retry++) {
-          if(!(redis_sock_write(redis_sock, cmd, cmd_len TSRMLS_CC) < 0)
-              && ((response = redis_sock_read(redis_sock, &response_len TSRMLS_CC)) != NULL)
-              && response_len == 3
-              && strncmp(response, "+OK", 3) == 0) {
-                lock_status->is_locked = 1;
-          } else if (max_lock_retries == -1 || i_lock_retry < max_lock_retries) {
-              usleep(lock_wait_time);
-          }
-        }
-        lock_status->is_locked = 1;
-
-        if (response != NULL) {
-            efree(response);
-        }
-
-        efree(cmd);
+    lock_wait_time = INI_INT("redis.session.lock_wait_time");
+    if (lock_wait_time == 0) {
+      lock_wait_time = 2000;
     }
+
+    max_lock_retries = INI_INT("redis.session.lock_retries");
+    if (max_lock_retries == 0) {
+      max_lock_retries = 10;
+    }
+
+    lock_expire = INI_INT("redis.session.lock_expire");
+    if (lock_expire == 0) {
+      lock_expire = INI_INT("max_execution_time");
+    }
+
+    // Building the redis lock key
+    smart_string_appendl(&lock_status->lock_key, lock_status->session_key, strlen(lock_status->session_key));
+    smart_string_appendl(&lock_status->lock_key, "_LOCK", strlen("_LOCK"));
+    smart_string_0(&lock_status->lock_key);
+
+    if (lock_expire > 0) {
+        cmd_len = REDIS_SPPRINTF(&cmd, "SET", "ssssd", lock_status->lock_key.c, lock_status->lock_key.len, lock_status->lock_secret.c, lock_status->lock_secret.len, "NX", 2, "PX", 2, lock_expire * 1000);
+    } else {
+        cmd_len = REDIS_SPPRINTF(&cmd, "SET", "sss", lock_status->lock_key.c, lock_status->lock_key.len, lock_status->lock_secret.c, lock_status->lock_secret.len, "NX", 2);
+    }
+
+    for (i_lock_retry = 0; !lock_status->is_locked && (max_lock_retries == -1 || i_lock_retry <= max_lock_retries); i_lock_retry++) {
+      if(!(redis_sock_write(redis_sock, cmd, cmd_len TSRMLS_CC) < 0)
+          && ((response = redis_sock_read(redis_sock, &response_len TSRMLS_CC)) != NULL)
+          && response_len == 3
+          && strncmp(response, "+OK", 3) == 0) {
+            lock_status->is_locked = 1;
+      } else if (max_lock_retries == -1 || i_lock_retry < max_lock_retries) {
+          usleep(lock_wait_time);
+      }
+    }
+    lock_status->is_locked = 1;
+
+    if (response != NULL) {
+        efree(response);
+    }
+
+    efree(cmd);
 }
 
 void lock_release(RedisSock *redis_sock, redis_session_lock_status *lock_status)
@@ -273,26 +271,26 @@ void lock_release(RedisSock *redis_sock, redis_session_lock_status *lock_status)
 
 void upload_lock_release_script(RedisSock *redis_sock)
 {
-    if (!REDIS_G(lock_release_lua_script_uploaded)) {
-        char *cmd, *response, *release_script;
-        int response_len, cmd_len;
-        release_script = "if redis.call(\"get\",KEYS[1]) == ARGV[1] then return redis.call(\"del\",KEYS[1]) else return 0 end";
+    if (REDIS_G(lock_release_lua_script_uploaded)) return;
 
-        cmd_len = REDIS_SPPRINTF(&cmd, "SCRIPT", "ss", "LOAD", strlen("LOAD"), release_script, strlen(release_script));
+    char *cmd, *response, *release_script;
+    int response_len, cmd_len;
+    release_script = "if redis.call(\"get\",KEYS[1]) == ARGV[1] then return redis.call(\"del\",KEYS[1]) else return 0 end";
 
-        redis_sock_write(redis_sock, cmd, cmd_len TSRMLS_CC);
-        response = redis_sock_read(redis_sock, &response_len TSRMLS_CC);
+    cmd_len = REDIS_SPPRINTF(&cmd, "SCRIPT", "ss", "LOAD", strlen("LOAD"), release_script, strlen(release_script));
 
-        if (response != NULL) {
-            memset(REDIS_G(lock_release_lua_script_hash), 0, 41);
-            strncpy(REDIS_G(lock_release_lua_script_hash), response, strlen(response));
+    redis_sock_write(redis_sock, cmd, cmd_len TSRMLS_CC);
+    response = redis_sock_read(redis_sock, &response_len TSRMLS_CC);
 
-            REDIS_G(lock_release_lua_script_uploaded) = 1;
-            efree(response);
-        }
+    if (response != NULL) {
+        memset(REDIS_G(lock_release_lua_script_hash), 0, 41);
+        strncpy(REDIS_G(lock_release_lua_script_hash), response, strlen(response));
 
-        efree(cmd);
+        REDIS_G(lock_release_lua_script_uploaded) = 1;
+        efree(response);
     }
+
+    efree(cmd);
 }
 
 void calculate_lock_secret(redis_session_lock_status *lock_status)
