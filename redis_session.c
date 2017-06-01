@@ -491,8 +491,8 @@ PS_READ_FUNC(redis)
 #else
     resp = redis_session_key(rpm, key->val, key->len, &resp_len);
 #endif
-    pool->lock_status->session_key = (char *) emalloc(resp_len);
-    memset(pool->lock_status->session_key, 0, resp_len);
+    pool->lock_status->session_key = (char *) emalloc(resp_len + 1);
+    memset(pool->lock_status->session_key, 0, resp_len + 1);
     strncpy(pool->lock_status->session_key, resp, resp_len);
 
     cmd_len = redis_cmd_format_static(&cmd, "GET", "s", resp, resp_len);

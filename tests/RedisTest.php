@@ -4971,7 +4971,7 @@ class Redis_Test extends TestSuite
     {
         $this->setSessionHandler();
 
-        $sessionId = session_create_id();
+        $sessionId = $this->generateSessionId();
         $this->startSessionProcess($sessionId, 0, false);
         session_write_close();
         $this->assertTrue($this->redis->exists('PHPREDIS_SESSION:' . $sessionId));
@@ -4980,7 +4980,7 @@ class Redis_Test extends TestSuite
     public function testSession_lockKeyCorrect()
     {
         $this->setSessionHandler();
-        $sessionId = session_create_id();
+        $sessionId = $this->generateSessionId();
         $this->startSessionProcess($sessionId, 5, true);
         usleep(100000);
 
@@ -4990,7 +4990,7 @@ class Redis_Test extends TestSuite
     public function testSession_lockingDisabledByDefault()
     {
         $this->setSessionHandler();
-        $sessionId = session_create_id();
+        $sessionId = $this->generateSessionId();
         $this->startSessionProcess($sessionId, 5, true, 300, false);
         usleep(100000);
 
@@ -5006,7 +5006,7 @@ class Redis_Test extends TestSuite
     public function testSession_lockReleasedOnClose()
     {
         $this->setSessionHandler();
-        $sessionId = session_create_id();
+        $sessionId = $this->generateSessionId();
         $this->startSessionProcess($sessionId, 1, true);
         usleep(1100000);
 
@@ -5016,7 +5016,7 @@ class Redis_Test extends TestSuite
     public function testSession_ttlMaxExecutionTime()
     {
         $this->setSessionHandler();
-        $sessionId = session_create_id();
+        $sessionId = $this->generateSessionId();
         $this->startSessionProcess($sessionId, 10, true, 2);
         usleep(100000);
 
@@ -5031,7 +5031,7 @@ class Redis_Test extends TestSuite
     public function testSession_ttlLockExpire()
     {
         $this->setSessionHandler();
-        $sessionId = session_create_id();
+        $sessionId = $this->generateSessionId();
         $this->startSessionProcess($sessionId, 10, true, 300, true, null, -1, 2);
         usleep(100000);
 
@@ -5046,7 +5046,7 @@ class Redis_Test extends TestSuite
     public function testSession_correctLockRetryCount()
     {
         $this->setSessionHandler();
-        $sessionId = session_create_id();
+        $sessionId = $this->generateSessionId();
         $this->startSessionProcess($sessionId, 10, true);
         usleep(100000);
 
@@ -5061,7 +5061,7 @@ class Redis_Test extends TestSuite
     public function testSession_defaultLockRetryCount()
     {
         $this->setSessionHandler();
-        $sessionId = session_create_id();
+        $sessionId = $this->generateSessionId();
         $this->startSessionProcess($sessionId, 10, true);
         usleep(100000);
 
@@ -5076,7 +5076,7 @@ class Redis_Test extends TestSuite
     public function testSession_noUnlockOfOtherProcess()
     {
         $this->setSessionHandler();
-        $sessionId = session_create_id();
+        $sessionId = $this->generateSessionId();
         $this->startSessionProcess($sessionId, 3, true, 1); // Process 1
         usleep(100000);
         $this->startSessionProcess($sessionId, 5, true);    // Process 2
@@ -5095,7 +5095,7 @@ class Redis_Test extends TestSuite
     public function testSession_lockWaitTime()
     {
         $this->setSessionHandler();
-        $sessionId = session_create_id();
+        $sessionId = $this->generateSessionId();
         $this->startSessionProcess($sessionId, 1, true, 300);
         usleep(100000);
 
@@ -5121,6 +5121,19 @@ class Redis_Test extends TestSuite
     {
         ini_set('session.save_handler', 'redis');
         ini_set('session.save_path', 'tcp://' . $this->getHost() . ':6379');
+    }
+
+    /**
+     * @return string
+     */
+    private function generateSessionId()
+    {
+        if (function_exists('session_create_id')) {
+            return session_create_id();
+        } else {
+            $encoded = bin2hex(openssl_random_pseudo_bytes(8));
+            return $encoded;
+        }
     }
 
     /**
