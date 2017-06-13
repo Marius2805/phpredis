@@ -18,6 +18,7 @@ if (isset($argv[7])) {
 }
 
 session_id($sessionId);
-session_start();
+$sessionStartSuccessful = session_start();
 sleep($sleepTime);
 
+echo $sessionStartSuccessful ? 'SUCCESS' : 'FAILURE';

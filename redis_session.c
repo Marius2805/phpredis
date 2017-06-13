@@ -186,9 +186,10 @@ redis_pool_get_sock(redis_pool *pool, const char *key TSRMLS_DC) {
     return NULL;
 }
 
-void lock_acquire(RedisSock *redis_sock, redis_session_lock_status *lock_status)
+int lock_acquire(RedisSock *redis_sock, redis_session_lock_status *lock_status)
 {
-    if (lock_status->is_locked || !INI_INT("redis.session.locking_enabled")) return;
+    if (lock_status->locking_failed) return FAILURE;
+    if (lock_status->is_locked || !INI_INT("redis.session.locking_enabled")) return SUCCESS;
 
     char *cmd, *response;
     int response_len, cmd_len, lock_wait_time, max_lock_retries, i_lock_retry, lock_expire;
@@ -230,13 +231,19 @@ void lock_acquire(RedisSock *redis_sock, redis_session_lock_status *lock_status)
           usleep(lock_wait_time);
       }
     }
-    lock_status->is_locked = 1;
 
     if (response != NULL) {
         efree(response);
     }
-
     efree(cmd);
+
+    if (lock_status->is_locked) {
+        lock_status->locking_failed = 0;
+        return SUCCESS;
+    } else {
+        lock_status->locking_failed = 1;
+        return FAILURE;
+    }
 }
 
 void lock_release(RedisSock *redis_sock, redis_session_lock_status *lock_status)
@@ -316,6 +323,7 @@ PS_OPEN_FUNC(redis)
     redis_pool *pool = redis_pool_new(TSRMLS_C);
     redis_session_lock_status *lock_status = ecalloc(1, sizeof(redis_session_lock_status));
     lock_status->is_locked = 0;
+    lock_status->locking_failed = 0;
     pool->lock_status = lock_status;
 
     for (i=0,j=0,path_len=strlen(save_path); i<path_len; i=j+1) {
@@ -537,7 +545,7 @@ PS_READ_FUNC(redis)
 PS_WRITE_FUNC(redis)
 {
     char *cmd, *response, *session;
-    int cmd_len, response_len, session_len;
+    int cmd_len, response_len, session_len, lock_failed;
 
     redis_pool *pool = PS_GET_MOD_DATA();
 #if (PHP_MAJOR_VERSION < 7)
@@ -563,8 +571,9 @@ PS_WRITE_FUNC(redis)
     strncpy(pool->lock_status->session_key, session, strlen(session));
     efree(session);
 
-    lock_acquire(redis_sock, pool->lock_status);
-    if(redis_sock_write(redis_sock, cmd, cmd_len TSRMLS_CC) < 0) {
+    lock_failed = lock_acquire(redis_sock, pool->lock_status);
+
+    if(lock_failed || redis_sock_write(redis_sock, cmd, cmd_len TSRMLS_CC) < 0) {
         efree(cmd);
         return FAILURE;
     }

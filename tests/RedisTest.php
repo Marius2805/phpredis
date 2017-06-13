@@ -4972,9 +4972,10 @@ class Redis_Test extends TestSuite
         $this->setSessionHandler();
 
         $sessionId = $this->generateSessionId();
-        $this->startSessionProcess($sessionId, 0, false);
+        $sessionSuccessful = $this->startSessionProcess($sessionId, 0, false);
         session_write_close();
         $this->assertTrue($this->redis->exists('PHPREDIS_SESSION:' . $sessionId));
+        $this->assertTrue($sessionSuccessful);
     }
 
     public function testSession_lockKeyCorrect()
@@ -4995,12 +4996,13 @@ class Redis_Test extends TestSuite
         usleep(100000);
 
         $start = microtime(true);
-        $this->startSessionProcess($sessionId, 0, false, 300, false);
+        $sessionSuccessful = $sessionSuccessful = $this->startSessionProcess($sessionId, 0, false, 300, false);
         $end = microtime(true);
         $elapsedTime = $end - $start;
 
         $this->assertFalse($this->redis->exists('PHPREDIS_SESSION:' . $sessionId . '_LOCK'));
         $this->assertTrue($elapsedTime < 1);
+        $this->assertTrue($sessionSuccessful);
     }
 
     public function testSession_lockReleasedOnClose()
@@ -5021,11 +5023,12 @@ class Redis_Test extends TestSuite
         usleep(100000);
 
         $start = microtime(true);
-        $this->startSessionProcess($sessionId, 0, false);
+        $sessionSuccessful = $this->startSessionProcess($sessionId, 0, false);
         $end = microtime(true);
         $elapsedTime = $end - $start;
 
         $this->assertTrue($elapsedTime < 3);
+        $this->assertTrue($sessionSuccessful);
     }
 
     public function testSession_ttlLockExpire()
@@ -5036,11 +5039,12 @@ class Redis_Test extends TestSuite
         usleep(100000);
 
         $start = microtime(true);
-        $this->startSessionProcess($sessionId, 0, false);
+        $sessionSuccessful = $this->startSessionProcess($sessionId, 0, false);
         $end = microtime(true);
         $elapsedTime = $end - $start;
 
         $this->assertTrue($elapsedTime < 3);
+        $this->assertTrue($sessionSuccessful);
     }
 
     public function testSession_correctLockRetryCount()
@@ -5051,11 +5055,12 @@ class Redis_Test extends TestSuite
         usleep(100000);
 
         $start = microtime(true);
-        $this->startSessionProcess($sessionId, 0, false, 10, true, 1000000, 3);
+        $sessionSuccessful = $this->startSessionProcess($sessionId, 0, false, 10, true, 1000000, 3);
         $end = microtime(true);
         $elapsedTime = $end - $start;
 
         $this->assertTrue($elapsedTime > 3 && $elapsedTime < 4);
+        $this->assertFalse($sessionSuccessful);
     }
 
     public function testSession_defaultLockRetryCount()
@@ -5066,11 +5071,12 @@ class Redis_Test extends TestSuite
         usleep(100000);
 
         $start = microtime(true);
-        $this->startSessionProcess($sessionId, 0, false, 10, true, 200000, 0);
+        $sessionSuccessful = $this->startSessionProcess($sessionId, 0, false, 10, true, 200000, 0);
         $end = microtime(true);
         $elapsedTime = $end - $start;
 
         $this->assertTrue($elapsedTime > 2 && $elapsedTime < 3);
+        $this->assertFalse($sessionSuccessful);
     }
 
     public function testSession_noUnlockOfOtherProcess()
@@ -5085,11 +5091,12 @@ class Redis_Test extends TestSuite
         // Waiting until TTL of process 1 ended and process 2 locked the session,
         // because is not guaranteed which waiting process gets the next lock
         sleep(1);
-        $this->startSessionProcess($sessionId, 0, false);
+        $sessionSuccessful = $this->startSessionProcess($sessionId, 0, false);
         $end = microtime(true);
         $elapsedTime = $end - $start;
 
         $this->assertTrue($elapsedTime > 5);
+        $this->assertTrue($sessionSuccessful);
     }
 
     public function testSession_lockWaitTime()
@@ -5100,11 +5107,12 @@ class Redis_Test extends TestSuite
         usleep(100000);
 
         $start = microtime(true);
-        $this->startSessionProcess($sessionId, 0, false, 300, true, 3000000);
+        $sessionSuccessful = $this->startSessionProcess($sessionId, 0, false, 300, true, 3000000);
         $end = microtime(true);
         $elapsedTime = $end - $start;
 
         $this->assertTrue($elapsedTime > 2.5 && $elapsedTime < 3.5);
+        $this->assertTrue($sessionSuccessful);
     }
 
     public function testMultipleConnect() {
@@ -5145,11 +5153,14 @@ class Redis_Test extends TestSuite
      * @param int    $lock_wait_time
      * @param int    $lock_retries
      * @param int    $lock_expires
+     *
+     * @return bool
      */
     private function startSessionProcess($sessionId, $sleepTime, $background, $maxExecutionTime = 300, $locking_enabled = true, $lock_wait_time = null, $lock_retries = -1, $lock_expires = 0)
     {
         if (substr(php_uname(), 0, 7) == "Windows"){
             $this->markTestSkipped();
+            return true;
         } else {
             $commandParameters = [$sessionId, $sleepTime, $maxExecutionTime, $lock_retries, $lock_expires];
             if ($locking_enabled) {
@@ -5161,12 +5172,11 @@ class Redis_Test extends TestSuite
             }
             $commandParameters = array_map('escapeshellarg', $commandParameters);
 
-            $command = $command = 'php ' . __DIR__ . '/startSession.php ' . implode(' ', $commandParameters);
-            if ($background) {
-                $command .= ' > /dev/null &';
-            }
+            $command = 'php ' . __DIR__ . '/startSession.php ' . implode(' ', $commandParameters);
+            $command .= $background ? ' > /dev/null &' : ' 2>&1';
 
-            exec($command);
+            exec($command, $output);
+            return ($background || $output[0] == 'SUCCESS') ? true : false;
         }
     }
 }
