@@ -5047,6 +5047,29 @@ class Redis_Test extends TestSuite
         $this->assertTrue($sessionSuccessful);
     }
 
+    public function testSession_lockHoldCheckBeforeWrite_otherProcessHasLock()
+    {
+        $this->setSessionHandler();
+        $sessionId = $this->generateSessionId();
+        $this->startSessionProcess($sessionId, 2, true, 300, true, null, -1, 1, 'firstProcess');
+        usleep(1500000); // 1.5 sec
+        $writeSuccessful = $this->startSessionProcess($sessionId, 0, false, 300, true, null, -1, 10, 'secondProcess');
+        sleep(1);
+
+        $this->assertTrue($writeSuccessful);
+        $this->assertEquals('secondProcess', $this->getSessionData($sessionId));
+    }
+
+    public function testSession_lockHoldCheckBeforeWrite_nobodyHasLock()
+    {
+        $this->setSessionHandler();
+        $sessionId = $this->generateSessionId();
+        $writeSuccessful = $this->startSessionProcess($sessionId, 2, false, 300, true, null, -1, 1, 'firstProcess');
+
+        $this->assertFalse($writeSuccessful);
+        $this->assertTrue('firstProcess' !== $this->getSessionData($sessionId));
+    }
+
     public function testSession_correctLockRetryCount()
     {
         $this->setSessionHandler();
@@ -5153,16 +5176,17 @@ class Redis_Test extends TestSuite
      * @param int    $lock_wait_time
      * @param int    $lock_retries
      * @param int    $lock_expires
+     * @param string $sessionData
      *
      * @return bool
      */
-    private function startSessionProcess($sessionId, $sleepTime, $background, $maxExecutionTime = 300, $locking_enabled = true, $lock_wait_time = null, $lock_retries = -1, $lock_expires = 0)
+    private function startSessionProcess($sessionId, $sleepTime, $background, $maxExecutionTime = 300, $locking_enabled = true, $lock_wait_time = null, $lock_retries = -1, $lock_expires = 0, $sessionData = '')
     {
         if (substr(php_uname(), 0, 7) == "Windows"){
             $this->markTestSkipped();
             return true;
         } else {
-            $commandParameters = [$sessionId, $sleepTime, $maxExecutionTime, $lock_retries, $lock_expires];
+            $commandParameters = [$sessionId, $sleepTime, $maxExecutionTime, $lock_retries, $lock_expires, $sessionData];
             if ($locking_enabled) {
                 $commandParameters[] = '1';
 
@@ -5173,11 +5197,24 @@ class Redis_Test extends TestSuite
             $commandParameters = array_map('escapeshellarg', $commandParameters);
 
             $command = 'php ' . __DIR__ . '/startSession.php ' . implode(' ', $commandParameters);
-            $command .= $background ? ' > /dev/null &' : ' 2>&1';
+            $command .= $background ? ' 2>/dev/null > /dev/null &' : ' 2>&1';
 
             exec($command, $output);
-            return ($background || $output[0] == 'SUCCESS') ? true : false;
+            return ($background || (count($output) == 1 && $output[0] == 'SUCCESS')) ? true : false;
         }
+    }
+
+    /**
+     * @param string $sessionId
+     *
+     * @return string
+     */
+    private function getSessionData($sessionId)
+    {
+        $command = 'php ' . __DIR__ . '/getSessionData.php ' . escapeshellarg($sessionId);
+        exec($command, $output);
+
+        return $output[0];
     }
 }
 ?>

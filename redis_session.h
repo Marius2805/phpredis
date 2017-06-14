@@ -5,7 +5,6 @@
 
 typedef struct {
     zend_bool is_locked;
-    zend_bool locking_failed;
     char *session_key;
 	smart_string lock_key;
     smart_string lock_secret;
@@ -13,6 +12,8 @@ typedef struct {
 
 int lock_acquire(RedisSock *redis_sock, redis_session_lock_status *lock_status);
 void lock_release(RedisSock *redis_sock, redis_session_lock_status *lock_status);
+void refresh_lock_status(RedisSock *redis_sock, redis_session_lock_status *lock_status);
+int write_allowed(RedisSock *redis_sock, redis_session_lock_status *lock_status);
 void upload_lock_release_script(RedisSock *redis_sock);
 void calculate_lock_secret(redis_session_lock_status *lock_status);
 
