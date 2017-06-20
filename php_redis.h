@@ -271,7 +271,6 @@ PHP_REDIS_API void set_pipeline_head(zval *object, request_item *head);
 PHP_REDIS_API request_item* get_pipeline_current(zval *object);
 PHP_REDIS_API void set_pipeline_current(zval *object, request_item *current);
 
-#ifndef _MSC_VER
 ZEND_BEGIN_MODULE_GLOBALS(redis)
     int lock_release_lua_script_uploaded;
     char lock_release_lua_script_hash[41];
