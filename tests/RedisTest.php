@@ -7,6 +7,8 @@ class Redis_Test extends TestSuite
     const PORT = 6379;
     const AUTH = NULL; //replace with a string to use Redis authentication
 
+    const TCP_KILL_BINARY = '/usr/sbin/tcpkill';
+
     /* City lat/long */
     protected $cities = Array(
         'Chico'         => Array(-121.837478, 39.728494),
@@ -5504,6 +5506,28 @@ class Redis_Test extends TestSuite
         $this->assertEquals(600, $ttl);
     }
 
+    public function testSession_lock_networkProblems()
+    {
+        $sessionId = $this->generateSessionId();
+
+        /* Setting the lock key upfront to hold session process in lock loop */
+        $lockKey = $this->sessionPrefix . $sessionId . '_LOCK';
+        $this->redis->setex($lockKey, 10, 'network_problems_test');
+
+        /* Kill TCP connection of session process */
+        $this->killLatestClient(2);
+        usleep(100000);
+
+        $start = microtime(true);
+        $successful = $this->startSessionProcess($sessionId, 0, false, 10, true, 100000, -1, 0, 'test', 600);
+        $end = microtime(true);
+        $elapsedTime = $end - $start;
+
+        /* Expected: Unsuccessful session write + early break of lock loop */
+        $this->assertFalse($successful);
+        $this->assertTrue($elapsedTime < 4);
+    }
+
     private function setSessionHandler()
     {
         $host = $this->getHost() ?: 'localhost';
@@ -5546,7 +5570,7 @@ class Redis_Test extends TestSuite
      */
     private function startSessionProcess($sessionId, $sleepTime, $background, $maxExecutionTime = 300, $locking_enabled = true, $lock_wait_time = null, $lock_retries = -1, $lock_expires = 0, $sessionData = '', $sessionLifetime = 1440)
     {
-        if (substr(php_uname(), 0, 7) == "Windows"){
+        if (self::isWindowsOs()){
             $this->markTestSkipped();
             return true;
         } else {
@@ -5572,13 +5596,37 @@ class Redis_Test extends TestSuite
      * @param int    $sessionLifetime
      *
      * @return string
+     * @throws Exception
      */
     private function getSessionData($sessionId, $sessionLifetime = 1440)
     {
+        if (self::isWindowsOs()) {
+            $this->markTestSkipped();
+            return '';
+        }
+
         $command = self::getPhpCommand('getSessionData.php') . escapeshellarg($this->getFullHostPath()) . ' ' . $this->sessionSaveHandler . ' ' . escapeshellarg($sessionId) . ' ' . escapeshellarg($sessionLifetime);
         exec($command, $output);
 
         return $output[0];
+    }
+
+    /**
+     * Kills the latest connect client after sleeping for some time
+     *
+     * @param $sleepTime int Time in seconds to sleep before kill command is executed
+     *
+     * @throws Exception
+     */
+    private function killLatestClient($sleepTime)
+    {
+        if (self::isWindowsOs() || !self::isRootUser() || !file_exists(self::TCP_KILL_BINARY)) {
+            $this->markTestSkipped();
+            return;
+        }
+
+        $command = self::getPhpCommand('killConnction.php') . escapeshellarg($this->getFullHostPath()) . ' ' . escapeshellarg($sleepTime);
+        exec("$command 2>/dev/null > /dev/null &");
     }
 
     /**
@@ -5608,7 +5656,7 @@ class Redis_Test extends TestSuite
      *
      * @return string
      */
-    private function getPhpCommand($script)
+    private static function getPhpCommand($script)
     {
         static $cmd = NULL;
 
@@ -5618,6 +5666,22 @@ class Redis_Test extends TestSuite
             $cmd .= (getenv('TEST_PHP_ARGS') ?: '--no-php-ini --define extension=igbinary.so --define extension=' . dirname(__DIR__) . '/modules/redis.so');
         }
         return $cmd . ' ' . __DIR__ . '/' . $script . ' ';
+    }
+
+    /**
+     * @return bool
+     */
+    private static function isWindowsOs()
+    {
+        return substr(php_uname(), 0, 7) == "Windows";
+    }
+
+    /**
+     * @return bool
+     */
+    private static function isRootUser()
+    {
+        return posix_getuid() == 0;
     }
 }
 ?>
