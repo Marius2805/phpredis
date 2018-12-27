@@ -78,6 +78,8 @@ typedef struct {
     zend_string *session_key;
     zend_string *lock_key;
     zend_string *lock_secret;
+    char *transactions[99]; 
+    int transaction_index;
 } redis_session_lock_status;
 
 typedef struct redis_pool_member_ {
@@ -227,6 +229,44 @@ redis_pool_get_sock(redis_pool *pool, const char *key TSRMLS_DC) {
     return NULL;
 }
 
+void log_transaction(char *message, redis_session_lock_status *lock_status)
+{
+    if (lock_status->transaction_index >= 99) {
+        return;
+    }
+
+    lock_status->transactions[lock_status->transaction_index] = message;
+    lock_status->transaction_index++;
+}
+
+void free_transaction_log(redis_session_lock_status *lock_status)
+{
+    int i = 0;
+    for (i = 0; i < lock_status->transaction_index; i++) {
+        efree(lock_status->transactions[i]);
+    }
+    lock_status->transaction_index = 0;
+}
+
+char* print_transaction_log(redis_session_lock_status *lock_status)
+{
+    char* complete_log = NULL;
+    int total_length = 0, i;
+
+    for (i = 0; i < lock_status->transaction_index; i++) {
+        total_length += 5 + strlen(lock_status->transactions[i]);
+    }
+
+    complete_log = emalloc(total_length);
+    memset(complete_log, '\0', total_length);    
+
+    for (i = 0; i < lock_status->transaction_index; i++) {
+        snprintf(complete_log, total_length, "%s%d: %s\n", complete_log, i, lock_status->transactions[i]);
+    }
+
+    return complete_log;
+}
+
 /* Helper to set our session lock key */
 static int set_session_lock_key(RedisSock *redis_sock, char *cmd, int cmd_len
                                 TSRMLS_DC)
@@ -250,8 +290,12 @@ static int set_session_lock_key(RedisSock *redis_sock, char *cmd, int cmd_len
 static int lock_acquire(RedisSock *redis_sock, redis_session_lock_status *lock_status
                         TSRMLS_DC)
 {
-    char *cmd, hostname[HOST_NAME_MAX] = {0}, suffix[] = "_LOCK", pid[32];
-    int cmd_len, lock_wait_time, retries, i, expiry;
+    char *cmd, hostname[HOST_NAME_MAX] = {0}, suffix[] = "_LOCK", pid[32], *log_message;
+    int cmd_len, lock_wait_time, retries, i, expiry, log_len;
+
+    log_message = emalloc(51);
+    snprintf(log_message, 51, "Starting lock_acquire (is_locked: %d). [enabled: %d]", lock_status->is_locked, INI_INT("redis.session.locking_enabled"));
+    log_transaction(log_message, lock_status);
 
     /* Short circuit if we are already locked or not using session locks */
     if (lock_status->is_locked || !INI_INT("redis.session.locking_enabled"))
@@ -290,6 +334,11 @@ static int lock_acquire(RedisSock *redis_sock, redis_session_lock_status *lock_s
     memcpy(ZSTR_VAL(lock_status->lock_secret), hostname, hostname_len);
     memcpy(ZSTR_VAL(lock_status->lock_secret) + hostname_len, pid, pid_len);
 
+    log_len = 29 + ZSTR_LEN(lock_status->lock_key) + ZSTR_LEN(lock_status->lock_secret);
+    log_message = emalloc(log_len);
+    snprintf(log_message, log_len, "Using lock key %s with secret %s", ZSTR_VAL(lock_status->lock_key), ZSTR_VAL(lock_status->lock_secret));
+    log_transaction(log_message, lock_status);
+
     if (expiry > 0) {
         cmd_len = REDIS_SPPRINTF(&cmd, "SET", "SSssd", lock_status->lock_key,
                                  lock_status->lock_secret, "NX", 2, "PX", 2,
@@ -298,6 +347,12 @@ static int lock_acquire(RedisSock *redis_sock, redis_session_lock_status *lock_s
         cmd_len = REDIS_SPPRINTF(&cmd, "SET", "SSs", lock_status->lock_key,
                                  lock_status->lock_secret, "NX", 2);
     }
+
+    log_len = 94;
+    log_message = emalloc(log_len);
+    memset(log_message, '\0', log_len);
+    snprintf(log_message, log_len, "Starting lock aquire loop. [TTL: %d, max_retries: %d, sleep_time: %d]", expiry, retries, lock_wait_time);
+    log_transaction(log_message, lock_status);
 
     /* Attempt to get our lock */
     for (i = 0; retries == -1 || i <= retries; i++) {
@@ -312,6 +367,12 @@ static int lock_acquire(RedisSock *redis_sock, redis_session_lock_status *lock_s
         }
     }
 
+    log_len = 78;
+    log_message = emalloc(log_len);
+    memset(log_message, '\0', log_len);
+    snprintf(log_message, log_len, "Finished lock aquire loop with result %d within %d iterations", lock_status->is_locked, i + 1);
+    log_transaction(log_message, lock_status);
+
     /* Cleanup SET command */
     efree(cmd);
 
@@ -322,8 +383,13 @@ static int lock_acquire(RedisSock *redis_sock, redis_session_lock_status *lock_s
 #define IS_LOCK_SECRET(reply, len, secret) (len == ZSTR_LEN(secret) && !strncmp(reply, ZSTR_VAL(secret), len))
 static void refresh_lock_status(RedisSock *redis_sock, redis_session_lock_status *lock_status TSRMLS_DC)
 {
-    char *cmd, *reply = NULL;
-    int replylen, cmdlen;
+    char *cmd, *reply = NULL, *log_message, *warning_message, *full_transaction_log;
+    int replylen, cmdlen, log_len, warning_len;
+
+    log_len = 38;
+    log_message = emalloc(log_len);
+    snprintf(log_message, log_len, "Refreshing lock status (is_locked: %d)", lock_status->is_locked);
+    log_transaction(log_message, lock_status);
 
     /* Return early if we're not locked */
     if (!lock_status->is_locked)
@@ -332,8 +398,13 @@ static void refresh_lock_status(RedisSock *redis_sock, redis_session_lock_status
     /* If redis.session.lock_expire is not set => TTL=max_execution_time
        Therefore it is guaranteed that the current process is still holding
        the lock */
-    if (lock_status->is_locked && INI_INT("redis.session.lock_expire") == 0)
+    if (lock_status->is_locked && INI_INT("redis.session.lock_expire") == 0) {
+        log_len = 97;
+        log_message = emalloc(log_len);
+        snprintf(log_message, log_len, "Skipping refresh with positive result, as TTL = max_execution_time (redis.session.lock_expire=0)");
+        log_transaction(log_message, lock_status);
         return;
+    }
 
     /* Command to get our lock key value and compare secrets */
     cmdlen = REDIS_SPPRINTF(&cmd, "GET", "S", lock_status->lock_key);
@@ -342,16 +413,38 @@ static void refresh_lock_status(RedisSock *redis_sock, redis_session_lock_status
     reply = redis_simple_cmd(redis_sock, cmd, cmdlen, &replylen TSRMLS_CC);
     if (reply != NULL) {
         lock_status->is_locked = IS_LOCK_SECRET(reply, replylen, lock_status->lock_secret);
+
+        log_len = 41 + replylen;
+        log_message = emalloc(log_len);
+        snprintf(log_message, log_len, "Received secret of current lock key => %s", reply);
+        log_transaction(log_message, lock_status);
+
         efree(reply);
     } else {
+        log_len = 33;
+        log_message = emalloc(log_len);
+        snprintf(log_message, log_len, "No lock key is currently present");
+        log_transaction(log_message, lock_status);
+
         lock_status->is_locked = 0;
     }
+
+    log_len = 27;
+    log_message = emalloc(log_len);
+    snprintf(log_message, log_len, "Refreshed lock status to %d", lock_status->is_locked);
+    log_transaction(log_message, lock_status);
 
     /* Issue a warning if we're not locked.  We don't attempt to refresh the lock
      * if we aren't flagged as locked, so if we're not flagged here something
      * failed */
     if (!lock_status->is_locked) {
-        php_error_docref(NULL TSRMLS_CC, E_WARNING, "Failed to refresh session lock");
+        full_transaction_log = print_transaction_log(lock_status);
+        warning_len = strlen(full_transaction_log) + 58;
+
+        warning_message = emalloc(warning_len);
+        snprintf(warning_message, warning_len, "Failed to refresh session lock. Lock transaction trace:\n%s", full_transaction_log);
+        efree(full_transaction_log);
+        php_error_docref(NULL TSRMLS_CC, E_WARNING, warning_message);
     }
 
     /* Cleanup */
@@ -374,8 +467,13 @@ static int write_allowed(RedisSock *redis_sock, redis_session_lock_status *lock_
  * using EVALSHA. */
 static void lock_release(RedisSock *redis_sock, redis_session_lock_status *lock_status TSRMLS_DC)
 {
-    char *cmd, *reply;
-    int i, cmdlen, replylen;
+    char *cmd, *reply, *log_message, *full_transaction_log, *warning_message;
+    int i, cmdlen, replylen, log_len, warning_len;
+
+    log_len = 22;
+    log_message = emalloc(log_len);
+    snprintf(log_message, log_len, "Starting lock release");
+    log_transaction(log_message, lock_status);
 
     /* Keywords, command, and length fallbacks */
     const char *kwd[] = {"EVALSHA", "EVAL"};
@@ -393,8 +491,18 @@ static void lock_release(RedisSock *redis_sock, redis_session_lock_status *lock_
 
         /* Release lock and cleanup reply if we got one */
         if (reply != NULL) {
+            log_len = 37 + replylen;
+            log_message = emalloc(log_len);
+            snprintf(log_message, log_len, "Received reply %s while releasing lock", reply);
+            log_transaction(log_message, lock_status);
+
             lock_status->is_locked = 0;
             efree(reply);
+        } else {
+            log_len = 62;
+            log_message = emalloc(log_len);
+            snprintf(log_message, log_len, "Received NO reply while releasing lock, leaving is_locked = 1");
+            log_transaction(log_message, lock_status);
         }
 
         /* Cleanup command */
@@ -403,7 +511,13 @@ static void lock_release(RedisSock *redis_sock, redis_session_lock_status *lock_
 
     /* Something has failed if we are still locked */
     if (lock_status->is_locked) {
-        php_error_docref(NULL TSRMLS_CC, E_WARNING, "Failed to release session lock");
+        full_transaction_log = print_transaction_log(lock_status);
+        warning_len = strlen(full_transaction_log) + 56;
+
+        warning_message = emalloc(warning_len);
+        snprintf(warning_message, warning_len, "Failed to release session lock. Lock transaction trace:\n%s", full_transaction_log);
+        efree(full_transaction_log);
+        php_error_docref(NULL TSRMLS_CC, E_WARNING, warning_message);
     }
 }
 
@@ -544,6 +658,11 @@ PS_CLOSE_FUNC(redis)
 {
     redis_pool *pool = PS_GET_MOD_DATA();
 
+    int log_len = 24;
+    char *log_message = emalloc(log_len);
+    snprintf(log_message, log_len, "Executing PS_CLOSE_FUNC");
+    log_transaction(log_message, &pool->lock_status);
+
     if (pool) {
         if (pool->lock_status.session_key) {
             redis_pool_member *rpm = redis_pool_get_sock(pool, ZSTR_VAL(pool->lock_status.session_key) TSRMLS_CC);
@@ -554,6 +673,7 @@ PS_CLOSE_FUNC(redis)
             }
         }
 
+        free_transaction_log(&pool->lock_status);
         redis_pool_free(pool TSRMLS_CC);
         PS_SET_MOD_DATA(NULL);
     }
@@ -589,6 +709,11 @@ PS_CREATE_SID_FUNC(redis)
 {
     int retries = 3;
     redis_pool *pool = PS_GET_MOD_DATA();
+
+    int log_len = 29;
+    char *log_message = emalloc(log_len);
+    snprintf(log_message, log_len, "Executing PS_CREATE_SID_FUNC");
+    log_transaction(log_message, &pool->lock_status);
 
     if (!pool) {
 #if (PHP_MAJOR_VERSION < 7)
@@ -640,12 +765,28 @@ PS_CREATE_SID_FUNC(redis)
         sid = NULL;
     }
 
-    php_error_docref(NULL TSRMLS_CC, E_NOTICE,
-        "Acquiring session lock failed while creating session_id");
+    char *full_transaction_log = print_transaction_log(&pool->lock_status);
+    int warning_len = strlen(full_transaction_log) + 82;
+
+    char *warning_message = emalloc(warning_len);
+    snprintf(warning_message, warning_len, "Acquiring session lock failed while creating session_id. Lock transaction trace:\n%s", full_transaction_log);
+    efree(full_transaction_log);
+    php_error_docref(NULL TSRMLS_CC, E_WARNING, warning_message);
 
     return NULL;
 }
 /* }}} */
+
+void show_failed_write_warning(const char* message, redis_session_lock_status *lock_status)
+{
+    char *full_transaction_log = print_transaction_log(lock_status);
+    int warning_len = strlen(full_transaction_log) + strlen(message) + 27;
+
+    char *warning_message = emalloc(warning_len);
+    snprintf(warning_message, warning_len, "%s. Lock transaction trace:\n%s", message, full_transaction_log);
+    efree(full_transaction_log);
+    php_error_docref(NULL TSRMLS_CC, E_WARNING, warning_message);
+}
 
 #if (PHP_MAJOR_VERSION >= 7)
 /* {{{ PS_VALIDATE_SID_FUNC
@@ -666,6 +807,11 @@ PS_VALIDATE_SID_FUNC(redis)
     if (!redis_sock) {
         return FAILURE;
     }
+
+    int log_len = 31;
+    char *log_message = emalloc(log_len);
+    snprintf(log_message, log_len, "Executing PS_VALIDATE_SID_FUNC");
+    log_transaction(log_message, &pool->lock_status);
 
     /* send EXISTS command */
     zend_string *session = redis_session_key(rpm, skey, skeylen);
@@ -763,6 +909,11 @@ PS_READ_FUNC(redis)
         return FAILURE;
     }
 
+    int log_len = 23;
+    char *log_message = emalloc(log_len);
+    snprintf(log_message, log_len, "Executing PS_READ_FUNC");
+    log_transaction(log_message, &pool->lock_status);
+
     /* send GET command */
     if (pool->lock_status.session_key) zend_string_release(pool->lock_status.session_key);
     pool->lock_status.session_key = redis_session_key(rpm, skey, skeylen);
@@ -829,6 +980,11 @@ PS_WRITE_FUNC(redis)
         return FAILURE;
     }
 
+    int log_len = 24;
+    char *log_message = emalloc(log_len);
+    snprintf(log_message, log_len, "Executing PS_WRITE_FUNC");
+    log_transaction(log_message, &pool->lock_status);
+
     /* send SET command */
     zend_string *session = redis_session_key(rpm, skey, skeylen);
 #if (PHP_MAJOR_VERSION < 7)
@@ -853,7 +1009,8 @@ PS_WRITE_FUNC(redis)
     efree(cmd);
 
     /* read response */
-    if ((response = redis_sock_read(redis_sock, &response_len TSRMLS_CC)) == NULL) {
+    if (!(response = redis_sock_read(redis_sock, &response_len TSRMLS_CC)) == NULL) {
+        show_failed_write_warning("Failed to write session data (NULL response)", &pool->lock_status);
         return FAILURE;
     }
 
@@ -861,6 +1018,7 @@ PS_WRITE_FUNC(redis)
         efree(response);
         return SUCCESS;
     } else {
+        show_failed_write_warning("Failed to write session data (negative response)", &pool->lock_status);
         efree(response);
         return FAILURE;
     }
